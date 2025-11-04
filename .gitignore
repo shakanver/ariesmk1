@@ -1,0 +1,6 @@
+# Build logs
+log/
+
+# virtual environments created
+**/venv/** 
+**/ariespy/**

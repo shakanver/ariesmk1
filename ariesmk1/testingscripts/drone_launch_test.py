@@ -82,6 +82,7 @@ else:
 '''
 Launch and hover for a desired time period.
 '''
+print("Launching")
 start_time = datetime.now()
 while (datetime.now() - start_time).total_seconds() < hover_time:
 	mavlink_connection.mav.rc_channels_override_send(
@@ -100,10 +101,25 @@ while (datetime.now() - start_time).total_seconds() < hover_time:
 '''
 Land.
 '''
-start_time = datetime.now()
-curr_throttle = throttle
-while curr_throttle >= 1000:
-	curr_throttle = curr_throttle - 200
+mavlink_connection.mav.request_data_stream_send(
+	mavlink_connection.target_system,
+	mavlink_connection.target_component,
+	mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS,
+	10,
+	1
+)
+
+def get_throttle_from_rc_channel_msg():
+	msg = mavlink_connection.recv_match(type='RC_CHANNELS', blocking=True, timeout=3)
+	if msg and msg.get_type() == 'RC_CHANNELS':
+		return msg.chan3_raw
+
+
+print("Landing")
+curr_throttle = get_throttle_from_rc_channel_msg()
+while curr_throttle > 1000:
+	desired_throttle = curr_throttle - 200
+	print(f"sending desired throttle: {desired_throttle}")
 	mavlink_connection.mav.rc_channels_override_send(
 		mavlink_connection.target_system,
 		mavlink_connection.target_component,
@@ -113,3 +129,12 @@ while curr_throttle >= 1000:
 		yaw,
 		0,0,0,0
 	)
+
+	curr_throttle = get_throttle_from_rc_channel_msg()
+	time.sleep(1)
+
+
+	print(f"curr throttle: {curr_throttle}")
+
+
+print("Sequnce Complete")

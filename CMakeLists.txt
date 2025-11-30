@@ -45,11 +45,6 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}/templates/
 )
 
-install(PROGRAMS
-  ariesmk1/static/main.js
-  DESTINATION lib/${PROJECT_NAME}/static/
-)
-
 include_directories(${OpenCV_INCLUDE_DIRS})
 target_link_libraries(video_processor PUBLIC
   ${sensor_msgs_TARGETS}

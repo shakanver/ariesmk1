@@ -13,9 +13,11 @@ import os
 import threading
 import asyncio
 import numpy as np
+from pymavlink import mavutil
 
 
 SERVER_IP = "192.168.50.1"
+THROTTLE_INCREMENT = 5
 
 class RemoteControlApi(Node):
 
@@ -39,14 +41,14 @@ class RemoteControlApi(Node):
 		self.app = Flask(__name__, template_folder=templates_dir)
 		self._register_routes()
 
-		'''Setting up live streaming using WebRTC'''
-		self.peer_connections = set()
-		self.peer_connection_logger = logging.getLogger("peerConnection")
+		'''Initialize connection to flight controller to send command via mavlink protocol '''
+		self.mavlink_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=921600)
+		self.mavlink_connection.wait_heartbeat()
+		print("Hearbeat received from flight controller. Mavlink connection successful.")
 
-
-	def run_flask_app(self):
-		self.app.run(host=SERVER_IP, debug=False, use_reloader=False)
-
+	'''
+	ROS2 Methods
+	'''
 	def _camera_img_callback(self, msg):
         # Compute FPS
 		curr_time = self.get_clock().now()
@@ -75,6 +77,12 @@ class RemoteControlApi(Node):
 		except Exception as e:
 			self.get_logger().error(f"Error processing image: {e}")
 	
+	'''
+	Flask API Methods
+	'''
+	def run_flask_app(self):
+		self.app.run(host=SERVER_IP, debug=False, use_reloader=False)
+
 	def _try_get_curr_frame(self):
 		while True:
 			with self.lock_curr_frame:
@@ -88,9 +96,46 @@ class RemoteControlApi(Node):
 			yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + 
 			bytearray(encodedImage) + b'\r\n')
 
+	def _try_get_rc_channel_msg(self):
+			msg = self.mavlink_connection.recv_match(type='RC_CHANNELS', blocking=True, timeout=3)
+			if msg and msg.get_type() == 'RC_CHANNELS':
+				return msg.chan3_raw
+			return None
+		
+	def _set_thrust(self):
+		params = request.get_json()
+		if not params:
+			return jsonify({"error": "JSON data received was null or empty"}, 400)
+
+		direction = params["direction"]
+		if not direction:
+			return jsonify({"error": "JSON data received does not contain thrust direction"}, 400)
+
+		direction = direction.lower()
+
+		if direction.lower() not in ['up', 'down']:
+			return jsonify({"error": "JSON data received does not contain thrust direction"}, 400)
+
+		rc_msg = self._try_get_rc_channel_msg()
+		curr_throttle = rc_msg.chan3_raw
+
+		if direction == 'up':
+			curr_throttle += THROTTLE_INCREMENT
+		elif direction == 'down':
+			curr_throttle -= THROTTLE_INCREMENT
+		
+		self.mavlink_connection.mav.rc_channels_override_send(
+			self.mavlink_connection.target_system,
+			self.mavlink_connection.target_component,
+			0,0,
+			curr_throttle,
+			0,0,0,0,0
+		)
+		
 	def _register_routes(self):
 		self.app.add_url_rule("/", "index", lambda: render_template('index.html'))
 		self.app.add_url_rule("/video_feed", "video_feed", lambda:  Response(self._try_get_curr_frame(), mimetype='multipart/x-mixed-replace; boundary=frame'))
+		self.app.add_url_rule("/thrust", "thrust", self._set_thrust, methods=['POST'])
 
 def main(args=None):
 	with rclpy.init(args=args):

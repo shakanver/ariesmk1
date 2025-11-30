@@ -118,23 +118,18 @@ def get_throttle_from_rc_channel_msg():
 print("Landing")
 curr_throttle = get_throttle_from_rc_channel_msg()
 while curr_throttle > 1000:
-	desired_throttle = curr_throttle - 200
+	desired_throttle = curr_throttle - 50 
 	print(f"sending desired throttle: {desired_throttle}")
 	mavlink_connection.mav.rc_channels_override_send(
 		mavlink_connection.target_system,
 		mavlink_connection.target_component,
 		roll,
 		pitch,
-		curr_throttle,
+		desired_throttle,
 		yaw,
 		0,0,0,0
 	)
-
 	curr_throttle = get_throttle_from_rc_channel_msg()
-	time.sleep(1)
-
-
 	print(f"curr throttle: {curr_throttle}")
-
 
 print("Sequnce Complete")

@@ -9,8 +9,11 @@ import asyncio
 import numpy as np
 from pymavlink import mavutil
 
-#TODO:	add failsafe in case wifi drops, need to do some sort of emergency landing
-
+'''
+#TODO:	
+- add failsafe in case wifi drops, need to do some sort of emergency landing
+- Figure out how to stream video without ROS
+'''
 SERVER_IP = "192.168.50.1"
 THROTTLE_INCREMENT = 5
 
@@ -27,29 +30,33 @@ class RemoteControlApi():
 		self._register_routes()
 
 		'''Initialize connection to flight controller to send command via mavlink protocol '''
-		# TODO: make this not stall the flask app if no connection
 		self.mavlink_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=921600)
-		self.mavlink_connection.wait_heartbeat()
-		logger.info("Hearbeat received from flight controller. Mavlink connection successful.")
+		heartbeat = self.mavlink_connection.wait_heartbeat(timeout=3)
+		if not heartbeat:
+			logger.error("No heartbeat received from flight controller. Mavlink connection failed.")
+		else:
+			logger.info("Hearbeat received from flight controller. Mavlink connection successful.")
 
 	'''
 	Flask API Methods
 	'''
 	def run_flask_app(self):
 		self.app.run(host=SERVER_IP, debug=False, use_reloader=False)
-
+	
 	def _try_get_curr_frame(self):
-		while True:
-			with self.lock_curr_frame:
-				if self.curr_frame is None:
-					continue
+		img = np.zeros((480, 640, 3), dtype=np.uint8)
+		# while True:
+		# 	with self.lock_curr_frame:
+		# 		if self.curr_frame is None:
+		# 			continue
 
-				(flag, encodedImage) = cv2.imencode(".jpg", self.curr_frame)
-				if not flag:
-					continue
+		# 		(flag, encodedImage) = cv2.imencode(".jpg", self.curr_frame)
+		# 		if not flag:
+		# 			continue
+		_, encodedImage = cv2.imencode(".jpg", img)
 
-			yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + 
-			bytearray(encodedImage) + b'\r\n')
+		yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + 
+		bytearray(encodedImage) + b'\r\n')
 
 	def _try_get_curr_thrust(self):
 			msg = self.mavlink_connection.recv_match(type='RC_CHANNELS', blocking=True, timeout=3)

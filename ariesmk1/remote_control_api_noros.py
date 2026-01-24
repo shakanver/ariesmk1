@@ -80,12 +80,6 @@ class RemoteControlApi():
 		yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + 
 		bytearray(encodedImage) + b'\r\n')
 
-	def _try_get_curr_thrust(self):
-			msg = self.mavlink_connection.recv_match(type='RC_CHANNELS', blocking=True, timeout=3)
-			if msg and msg.get_type() == 'RC_CHANNELS':
-				return msg.chan3_raw
-			return None
-
 	def _arm_motors(self):
 		logger.info("Arming motors")
         
@@ -128,13 +122,6 @@ class RemoteControlApi():
 
 		if direction.lower() not in ['up', 'down']:
 			return jsonify({"error": "JSON data received does not contain thrust direction"}, 400)
-
-		# rc_msg = self._try_get_curr_thrust()
-		# print(f"rc message received: {rc_msg}")
-		# if rc_msg is None or rc_msg == 0:
-		# 	curr_throttle = 1000
-		# else:
-		# 	curr_throttle = rc_msg
 
 		if direction == 'up':
 			self.curr_throttle += THROTTLE_INCREMENT

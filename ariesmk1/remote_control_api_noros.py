@@ -19,6 +19,7 @@ THROTTLE_INCREMENT = 50
 
 logging.basicConfig(format='%(asctime)s %(message)s')
 logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 class RemoteControlApi():
 
@@ -28,6 +29,10 @@ class RemoteControlApi():
 		templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 		self.app = Flask(__name__, template_folder=templates_dir)
 		self._register_routes()
+		self.curr_throttle = 1000
+		self.last_throttle_channel_msg = None 
+		self.last_command_ack = None
+		self.user_armed_motors = False
 
 		'''Initialize connection to flight controller to send command via mavlink protocol '''
 		try:
@@ -37,8 +42,30 @@ class RemoteControlApi():
 				logger.error("No heartbeat received from flight controller. Mavlink connection failed.")
 			else:
 				logger.info("Hearbeat received from flight controller. Mavlink connection successful.")
+				self._start_mavlink_reader()
+
 		except Exception as e:
 			logger.error(f"Failed to connect to flight controller via mavlink: {e}")
+
+	def _start_mavlink_reader(self):
+		def reader():
+			while True:
+				try:
+					msg = self.mavlink_connection.recv_match(blocking=True, timeout=1)
+					if msg:
+						if msg.get_type() == 'RC_CHANNELS':
+							self.last_throttle_channel_msg = msg.chan3_raw
+						elif msg.get_type() == 'COMMAND_ACK':
+							self.last_command_ack = msg
+				except Exception as e:
+					logger.error(f"MAVLink reader error: {e}")
+					# try to recover after short delay
+					time.sleep(1)
+				finally:
+					time.sleep(0.01)  # prevent tight loop
+
+		t = threading.Thread(target=reader, daemon=True)
+		t.start()
 
 	'''
 	Flask API Methods
@@ -75,8 +102,8 @@ class RemoteControlApi():
 
 		# Check for the confirmation message
 		try:
-			msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
-			if msg and msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+			if self.last_command_ack and self.last_command_ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+					self.user_armed_motors = True
 					return make_response(jsonify({"message": "Arming command accepted."}), 200)
 			else:
 					return make_response(jsonify({"message": "Arming failed or command not acknowledged."}), 500)
@@ -90,6 +117,9 @@ class RemoteControlApi():
 		if not params:
 			return jsonify({"error": "JSON data received was null or empty"}, 400)
 
+		if not self.user_armed_motors:
+			return jsonify({"error": "Motors not armed. Please arm motors before setting thrust."}, 400)
+
 		direction = params["direction"]
 		if not direction:
 			return jsonify({"error": "JSON data received does not contain thrust direction"}, 400)
@@ -99,25 +129,28 @@ class RemoteControlApi():
 		if direction.lower() not in ['up', 'down']:
 			return jsonify({"error": "JSON data received does not contain thrust direction"}, 400)
 
-		rc_msg = self._try_get_curr_thrust()
-		print(f"rc message received: {rc_msg}")
-		if rc_msg is None or rc_msg == 0:
-			curr_throttle = 1000
-		else:
-			curr_throttle = rc_msg
+		# rc_msg = self._try_get_curr_thrust()
+		# print(f"rc message received: {rc_msg}")
+		# if rc_msg is None or rc_msg == 0:
+		# 	curr_throttle = 1000
+		# else:
+		# 	curr_throttle = rc_msg
 
 		if direction == 'up':
-			curr_throttle += THROTTLE_INCREMENT
+			self.curr_throttle += THROTTLE_INCREMENT
 		elif direction == 'down':
-			curr_throttle -= THROTTLE_INCREMENT
+			self.curr_throttle -= THROTTLE_INCREMENT
+		
+		# Clamp throttle to valid range
+		self.curr_throttle = max(1000, min(2000, self.curr_throttle))
 
-		print(f"Sending curr throttle: {curr_throttle}")
+		logger.info(f"Sending curr throttle: {self.curr_throttle}")
 		NO_OVERRIDE = 65535	
 		self.mavlink_connection.mav.rc_channels_override_send(
 			self.mavlink_connection.target_system,
 			self.mavlink_connection.target_component,
 			NO_OVERRIDE,NO_OVERRIDE,
-			curr_throttle,
+			self.curr_throttle,
 			NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE
 		)
 

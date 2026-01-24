@@ -15,7 +15,7 @@ from pymavlink import mavutil
 - Figure out how to stream video without ROS
 '''
 SERVER_IP = "192.168.50.1"
-THROTTLE_INCREMENT = 5
+THROTTLE_INCREMENT = 50
 
 logging.basicConfig(format='%(asctime)s %(message)s')
 logger = logging.getLogger()
@@ -30,12 +30,15 @@ class RemoteControlApi():
 		self._register_routes()
 
 		'''Initialize connection to flight controller to send command via mavlink protocol '''
-		self.mavlink_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=921600)
-		heartbeat = self.mavlink_connection.wait_heartbeat(timeout=3)
-		if not heartbeat:
-			logger.error("No heartbeat received from flight controller. Mavlink connection failed.")
-		else:
-			logger.info("Hearbeat received from flight controller. Mavlink connection successful.")
+		try:
+			self.mavlink_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=921600)
+			heartbeat = self.mavlink_connection.wait_heartbeat(timeout=3)
+			if not heartbeat:
+				logger.error("No heartbeat received from flight controller. Mavlink connection failed.")
+			else:
+				logger.info("Hearbeat received from flight controller. Mavlink connection successful.")
+		except Exception as e:
+			logger.error(f"Failed to connect to flight controller via mavlink: {e}")
 
 	'''
 	Flask API Methods
@@ -45,14 +48,6 @@ class RemoteControlApi():
 	
 	def _try_get_curr_frame(self):
 		img = np.zeros((480, 640, 3), dtype=np.uint8)
-		# while True:
-		# 	with self.lock_curr_frame:
-		# 		if self.curr_frame is None:
-		# 			continue
-
-		# 		(flag, encodedImage) = cv2.imencode(".jpg", self.curr_frame)
-		# 		if not flag:
-		# 			continue
 		_, encodedImage = cv2.imencode(".jpg", img)
 
 		yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + 
@@ -64,8 +59,8 @@ class RemoteControlApi():
 				return msg.chan3_raw
 			return None
 
-	def _arm_drone(self):
-		self.get_logger().info("Arming drone...")
+	def _arm_motors(self):
+		logger.info("Arming motors")
         
 		# MAV_CMD_COMPONENT_ARM_DISARM = 400
 		# param1: 1 = ARM, 0 = DISARM
@@ -79,11 +74,16 @@ class RemoteControlApi():
 		)
 
 		# Check for the confirmation message
-		msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
-		if msg and msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-			return make_response(jsonify({"message": "Arming command accepted."}), 200)
-		else:
-			return make_response(jsonify({"message": "Arming failed or command not acknowledged."}), 500)
+		try:
+			msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+			if msg and msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+					return make_response(jsonify({"message": "Arming command accepted."}), 200)
+			else:
+					return make_response(jsonify({"message": "Arming failed or command not acknowledged."}), 500)
+		except Exception as e:
+			error_msg = f"Error during arming: {e}"
+			logger.error(error_msg)
+			return make_response(jsonify({"message": error_msg}), 500)
 		
 	def _set_thrust(self):
 		params = request.get_json()
@@ -101,7 +101,7 @@ class RemoteControlApi():
 
 		rc_msg = self._try_get_curr_thrust()
 		print(f"rc message received: {rc_msg}")
-		if rc_msg is None:
+		if rc_msg is None or rc_msg == 0:
 			curr_throttle = 1000
 		else:
 			curr_throttle = rc_msg
@@ -112,13 +112,13 @@ class RemoteControlApi():
 			curr_throttle -= THROTTLE_INCREMENT
 
 		print(f"Sending curr throttle: {curr_throttle}")
-		
+		NO_OVERRIDE = 65535	
 		self.mavlink_connection.mav.rc_channels_override_send(
 			self.mavlink_connection.target_system,
 			self.mavlink_connection.target_component,
-			0,0,
+			NO_OVERRIDE,NO_OVERRIDE,
 			curr_throttle,
-			0,0,0,0,0
+			NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE,NO_OVERRIDE
 		)
 
 		return Response()
@@ -126,7 +126,7 @@ class RemoteControlApi():
 	def _register_routes(self):
 		self.app.add_url_rule("/", "index", lambda: render_template('index.html'))
 		self.app.add_url_rule("/video_feed", "video_feed", lambda:  Response(self._try_get_curr_frame(), mimetype='multipart/x-mixed-replace; boundary=frame'))
-		self.app.add_url_rule("/arm_drone", "arm_drone", self._arm_drone, methods=['POST'])
+		self.app.add_url_rule("/arm_motors", "arm_motors", self._arm_motors, methods=['POST'])
 		self.app.add_url_rule("/thrust", "thrust", self._set_thrust, methods=['POST'])
 
 

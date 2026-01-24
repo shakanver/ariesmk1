@@ -17,6 +17,15 @@
                 margin-bottom: 20px;
                 border: 2px solid #555;
             }
+            #logs-container{
+                width: 400px;
+                height: 200px;
+                background-color: #222;
+                color: #0f0;
+                padding: 10px;
+                overflow-y: scroll;
+                font-family: monospace;
+            }
             #controls-container {
                 display: flex;
                 flex-direction: column;
@@ -34,15 +43,13 @@
                 background-color: #4CAF50; /* Green */
                 color: white;
             }
-            #up-button:active {
-                background-color: #45a049;
-            }
             #down-button {
                 background-color: #f44336; /* Red */
                 color: white;
             }
-            #down-button:active {
-                background-color: #da190b;
+            #arm-button {
+                background-color: #008CBA; /* Blue */
+                color: white;
             }
         </style>
     </head>
@@ -51,13 +58,25 @@
             <img src="{{ url_for('video_feed') }}" alt="ROS2 Camera Feed">
         </div>
 
+        <div id="flight-logs">
+        </div>
+
         <div id="controls-container">
-            <button id="up-button" class="control-button">UP (Take Off)</button>
-            <button id="down-button" class="control-button">DOWN (Land)</button>
+            <div>
+                <h3>Flight Logs:</h3>
+                <div id="logs-output" >
+                <!-- Logs will be appended here -->
+                </div>
+                <h3>Controls:</h3>
+                <button id="arm-button" class="control-button" onclick="">ARM MOTORS</button>
+                <button id="up-button" class="control-button">UP (Take Off)</button>
+                <button id="down-button" class="control-button">DOWN (Land)</button>
+            </div>
         </div>
     </body>
     <script>
         const THRUST_ENDPOINT = '/thrust';
+        const ARM_MOTORS_ENDPOINT = '/arm_motors';
         const INTERVAL_MS = 100;
 
         let thrustInterval = null; // To hold the interval timer ID
@@ -143,6 +162,20 @@
         assignEvents(upButton, 'up');
         assignEvents(downButton, 'down');
 
-
+        const armButton = document.getElementById('arm-button');
+        armButton.addEventListener('click', () => {
+            fetch('/arm_motors', { method: 'POST' })
+            .then(response => {
+                if(response.ok) {
+                    console.log(response.statusText);
+                }
+                if (!response.ok) {
+                    console.error('Failed to arm motors:', response.statusText);
+                }
+            })
+            .catch(error => {
+                console.error('Network or fetch error:', error);
+            });
+        });
     </script>
 </html>
